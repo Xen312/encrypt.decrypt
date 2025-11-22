@@ -1,11 +1,9 @@
 /* ---------------------------
-   ORIGINAL CODE (unchanged)
-   ---------------------------
-   All original functions kept: UI toggles, encryptCaesar, encryptMessage,
-   decryptMessage, charToNumber, numberToChar, decryptCaesarCipher,
-   checkEncryptForm, checkDecryptForm, and event listeners.
-   This portion follows your original file closely.
-   (I left comments minimal and didn't alter cryptographic logic.)
+   Updated script.js
+   - Spaces are converted to '%' before encryption and treated as ASCII 37 in the math.
+   - During decryption, ASCII 37 is converted back to '%' and then shown as a space in the final output.
+   - Fixed the destructuring bug from earlier (uses ...remainingkeys).
+   - The copy-both helper and UI wiring are left intact / appended.
 ---------------------------- */
 
 const container = document.getElementById('container');
@@ -44,23 +42,37 @@ function numberToLetter(num) {
 }
 
 function encryptMessage() {
+    // Read inputs
     let word = document.getElementById('message').value;
     let shift = parseInt(document.getElementById('shift').value);
-    let methodInput = document.getElementById('method').value.toLowerCase();
+    let methodInput = (document.getElementById('method').value || '').toLowerCase();
     let r = parseInt(document.getElementById('r').value);
     let l = parseInt(document.getElementById('l').value);
     let j = parseInt(document.getElementById('loops').value);
 
     let method = methodInput === 'sine' ? 1 : methodInput === 'cosine' ? 2 : 0;
 
+    // NEW: Treat spaces as '%' BEFORE Caesar shift.
+    // This makes spaces preserved as '%' char, and later we'll convert '%' to ASCII 37 inside M.
+    word = word.replace(/ /g, '%');
+
+    // Apply Caesar shift to alphabetic characters only
     word = encryptCaesar(word, shift);
 
+    // Build M array:
+    // - letters -> 0..25
+    // - '%' (space placeholder) -> 37 (ASCII)
     let M = [];
     for (let c of word) {
-        if (c.match(/[A-Z]/)) {
+        if (c === '%') {
+            M.push(37); // ASCII of '%'
+        } else if (c.match(/[A-Z]/)) {
             M.push(c.charCodeAt(0) - 'A'.charCodeAt(0));
         } else if (c.match(/[a-z]/)) {
             M.push(c.charCodeAt(0) - 'a'.charCodeAt(0));
+        } else {
+            // For any other char (unexpected), try to push its ASCII value
+            M.push(c.charCodeAt(0));
         }
     }
 
@@ -68,6 +80,7 @@ function encryptMessage() {
     let K = [shift, method];
     let C = Array(len).fill(0);
 
+    // convert given r,l to letters (as before)
     let r_letter = numberToLetter(r);
     let l_letter = numberToLetter(l);
 
@@ -82,7 +95,9 @@ function encryptMessage() {
                     sum *= (2 * i + n);
                 }
                 let product = M[i] * R * sum;
+                // C[i] must remain 0..25
                 C[i] = (product % 26 + 26) % 26;
+                // store extra info to undo the division later
                 currentK[i] = Math.floor(product / 26);
             }
         } else if (method === 2) { // cosine method
@@ -99,15 +114,17 @@ function encryptMessage() {
         }
 
         K = K.concat(currentK);
-        M = C;
+        M = C.slice(); // iterate with new C for next loop
     }
 
-    word = word.toUpperCase() + r_letter + l_letter;
+    // Build display word: start from the uppercase version of original (as prior)
+    // Append r_letter and l_letter as previously expected.
+    let displayWord = word.toUpperCase() + r_letter + l_letter;
 
-    let keySetString = K.join(' ');
-
+    // Replace the first len characters with letters computed from C.
     for (let i = 0; i < len; i++) {
-        word = word.slice(0, i) + String.fromCharCode(C[i] + 'A'.charCodeAt(0)) + word.slice(i + 1);
+        const letter = String.fromCharCode(C[i] + 'A'.charCodeAt(0));
+        displayWord = displayWord.slice(0, i) + letter + displayWord.slice(i + 1);
     }
 
     const encryptMessageForm = document.getElementById('encryptMessageForm');
@@ -122,8 +139,8 @@ function encryptMessage() {
         const encryptedMessage = document.getElementById('encryptedMessage');
         
         encryptedMessage.style.display = 'flex';
-        document.getElementById('encMsg').textContent = word;
-        document.getElementById('keySet').textContent = keySetString;
+        document.getElementById('encMsg').textContent = displayWord;
+        document.getElementById('keySet').textContent = K.join(' ');
     }, 2000);
 }
 
@@ -131,8 +148,20 @@ function charToNumber(ch) {
     return ch.toUpperCase().charCodeAt(0) - 'A'.charCodeAt(0);
 }
 
+// Updated numberToChar to handle values >= 26 (esp. ASCII 37 -> '%')
 function numberToChar(num) {
-    return String.fromCharCode('A'.charCodeAt(0) + num);
+    if (typeof num !== 'number' || isNaN(num)) return '';
+    if (num >= 0 && num <= 25) {
+        return String.fromCharCode('A'.charCodeAt(0) + num);
+    }
+    // If it's 37 exactly, return '%' (ASCII 37)
+    if (num === 37) return '%';
+    // Otherwise, try to convert numeric value to a character code (best-effort)
+    try {
+        return String.fromCharCode(num);
+    } catch (e) {
+        return '';
+    }
 }
 
 function decryptCaesarCipher(encryptedWord, shift) {
@@ -157,26 +186,33 @@ function decryptMessage() {
     encryptMessageForm.style.display = 'none';
     encryptedMessage.style.display = 'none';
 
+    // Read encrypted input and keys
     let encryptedWord = document.getElementById('encryptedInput').value;
     let keysInput = document.getElementById('keysInput').value.trim();
 
+    // sanitize keys: keep numbers and spaces
     let sanitizedKeysInput = keysInput.replace(/[^\d\s]/g, '').replace(/\s+/g, ' ');
 
     let splitKeys = sanitizedKeysInput.split(' ').filter(key => key !== '');
 
     let keys = splitKeys.map(Number);
 
+    // Fixed destructuring: grab shift & method, keep remaining keys
+    const [shift, method, ...remainingkeys] = keys;
+    keys = remainingkeys;
+
     let j = encryptedWord.length;
+    // Convert encrypted letters back to numbers 0..25
     let C = encryptedWord.split('').map(charToNumber);
 
+    // Extract l and r letters appended at end of original scheme
+    // NOTE: original code pulled them via pop; keep the same pattern
     let l = C.pop();
     j--;
     let r = C.pop();
     j--;
 
-    let [shift, method, ...remainingkeys] = keys;
-    keys = remainingkeys;
-
+    // now keys length etc
     let numKeys = keys.length;
     let loop = Math.floor(numKeys / j);
 
@@ -191,6 +227,7 @@ function decryptMessage() {
                     sum *= (2 * i + n);
                 }
                 let K_value = keys[numKeys - j + i];
+                // Recover original numeric M[i] before mod 26: floor((C[i] + 26*K_value) / (R * sum))
                 M[i] = Math.floor((C[i] + 26 * K_value) / (R * sum));
             }
             C = M;
@@ -211,9 +248,17 @@ function decryptMessage() {
         numKeys -= j;
     }
 
+    // Now C contains numeric "M" values that represent either:
+    // - 0..25 (letters), or
+    // - 37 (ASCII for '%') for spaces, or
+    // - other ASCII values (fallback).
     let resultWord = C.map(numberToChar).join('');
 
+    // Undo Caesar shift on alphabetic characters
     let decryptedWord = decryptCaesarCipher(resultWord, shift);
+
+    // Convert '%' placeholders back to actual spaces for final display
+    decryptedWord = decryptedWord.replace(/%/g, ' ');
 
     decryptMessageForm.style.display = 'none';
 
@@ -266,11 +311,9 @@ document.getElementById('keysInput').addEventListener('input', checkDecryptForm)
 
 
 /* ----------------------------
-   NEW: copy-both JSON helper
-   ----------------------------
-   Appended module (non-invasive). Watches #encMsg and #keySet, enables
-   #copyBothBtn when both are present, copies JSON to clipboard and auto-fills
-   decrypt inputs. Also supports paste-handling of the JSON package.
+   COPY-BOTH JSON HELPER (appended)
+   - Non-invasive: watches #encMsg/#keySet and enables copy button when present.
+   - Copies {"enc":"...","keys":"..."} as JSON, populates decrypt fields on the same page.
 ----------------------------- */
 
 (function () {
